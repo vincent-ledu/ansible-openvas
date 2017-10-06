@@ -1,0 +1,10 @@
+[Unit]
+Description=Launch openvas manager on local interface for omp cli
+
+[Service]
+Type=simple
+ExecStart=/sbin/openvasmd -a 127.0.0.1 -p 9390
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,9 @@
+[Unit]
+Description=Set somax conn to 65K
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c "sysctl -w net.core.somaxconn=65535"
+
+[Install]
+WantedBy=multi-user.target

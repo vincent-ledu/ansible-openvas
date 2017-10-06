@@ -1,0 +1,137 @@
+---
+
+- name: copy needed files
+  copy: src={{ item.src }} dest={{ item.dest }}
+  with_items:
+  - {src: 'set-somaxconn.service', dest: '/etc/systemd/system/' }
+  - {src: 'disable-thp.service', dest: '/etc/systemd/system/' }
+  - {src: 'datalab-atomic.repo', dest: '/etc/yum.repos.d/' }
+  - {src: 'load_openvas_config.sh', dest: '/root/' }
+  - {src: 'omp.config', dest: '/root/' }
+  - {src: 'openvasmd-cli.service', dest: '/etc/systemd/system/' }
+
+- name: configure postfix
+  copy: 
+    src: main.cf
+    dest: /etc/postfix/
+  notify: postfix_service
+
+- name: configure cntlm
+  copy: 
+    src: cntlm.conf
+    dest: /etc/
+    owner: root 
+    group: root 
+    mode: "u+rw,g-rwx,o-rwx"
+
+- name: enable service set-somaxconn.service and ensure it is not masked
+  systemd:
+    name: set-somaxconn.service
+    enabled: yes
+    masked: no
+
+- name: enable service disable-thp.service and ensure it is not masked
+  systemd:
+    name: disable-thp.service
+    enabled: yes
+    masked: no
+
+- name: enable service openvas-manager on local interface for omp-cli
+  systemd:
+    name: openvasmd-cli.service
+    state: started
+    enabled: yes
+    masked: no
+
+- name: setup mem overcommit
+  lineinfile: path=/etc/sysctl.conf line='vm.overcommit_memory = 1'
+
+- name: install openvas bin
+  yum: state=present name={{ item }}
+  with_items:
+  - mailx
+  - xmlstarlet
+  - openvas
+  - gnutls-utils
+  - bzip2 
+  - wget 
+  - rng-tools 
+  - cntlm
+  tags:
+    - openvas
+
+- name: extract vuln data to openvas
+  unarchive: src=nvt-data.tgz dest=/var/lib/openvas/plugins/
+
+- name: extract vuln data to openvas
+  unarchive: src=cert-data.tgz dest=/var/lib/openvas/
+
+- name: extract vuln data to openvas
+  unarchive: src=scap-data.tgz dest=/var/lib/openvas/
+
+- name: reload systemd
+  systemd: daemon_reload=yes
+
+- name: Make sure a service is enabled
+  systemd: enabled=yes name={{ item }}
+  with_items:
+  - set-somaxconn
+  - rngd
+  - disable-thp
+  - redis
+  - openvas-scanner
+  - openvas-manager
+  - gsad
+
+- name: finalize configuration of openvas
+  shell: |
+    /usr/bin/openvas-manage-certs -a
+    /usr/bin/perl -p -i -e "s[^GSA_ADDRESS=.*][GSA_ADDRESS=0.0.0.0]g" /etc/sysconfig/gsad
+    if ! grep -q ^unixsocket.*/tmp/redis.sock /etc/redis.conf ; then
+        echo "unixsocket /tmp/redis.sock" >> /etc/redis.conf
+    fi
+
+    if ! grep -q ^unixsocketperm.*700 /etc/redis.conf; then
+        echo "unixsocketperm 700" >> /etc/redis.conf
+    fi
+    systemctl restart redis openvas-scanner openvas-manager gsad
+
+    /usr/sbin/openvasmd  --create-user=admin >/dev/null 2>&1
+    /usr/sbin/openvasmd  --user=admin --new-password=monmotdepasse
+    exit 0
+  args:
+    executable: /bin/bash
+
+- name: Make sure a service is started
+  systemd: state=started name={{ item }}
+  with_items:
+  - set-somaxconn
+  - disable-thp
+  - rngd
+  - cntlm
+
+- name: Make sure a service is enabled
+  systemd: state=restarted name={{ item }}
+  with_items:
+  - redis
+  - openvas-scanner
+  - openvas-manager
+  - gsad
+
+- name: add cron for updating target
+  cron:
+    name: "update openvas targets"
+    minute: 0
+    hour: 18
+    job: "/root/load_openvas_config.sh > /var/log/load_openvas_config.log || echo 'Something in cron job /root/load_openvas_config.sh. See /var/log/load_openvas_config.log.' | mail -s 'Something wrong...' noname@nodomain.com"
+
+- name: display post install message
+  debug:
+    msg:
+      - 'Things left to do:'
+      - '0. run /usr/sbin/openvasmd --update --progress'
+      - '1. run openvas-check-setup'
+      - '2. load configuration with omp script'
+      - '  a. add ssh credential named openvas_tech by web ui'
+      - '  b. run script /root/load_openvas_config.sh as root'
+

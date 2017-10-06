@@ -1,0 +1,9 @@
+---
+- name: init VM
+  hosts: datalab-adm-scanner.novalocal
+  vars:
+    - ansible_ssh_user: "centos"
+  become: yes
+  become_user: root
+  roles:
+    - deploy-openvas
